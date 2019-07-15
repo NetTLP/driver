@@ -17,10 +17,7 @@
 #endif
 
 #define DRV_NAME          "nettlp"
-#define IFNAMSIZ          16
-#define NETTLP_VERSION  "0.0.1"
-
-#define	DMA_BUF_SIZE      (1024*1024)
+#define NETTLP_VERSION  "0.0.2"
 
 struct mmio {
 	uint8_t *virt;
@@ -40,9 +37,6 @@ struct nettlp {
 struct nettlp_dev {
 	struct nettlp dev;
 };
-
-/* Global variables */
-static struct nettlp_dev nt;
 
 
 
@@ -64,8 +58,15 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 			   const struct pci_device_id *ent)
 {
 	int rc;
+	struct nettlp_dev *nt;
 
-	pr_info("%s\n", __func__);
+	pr_info("%s: register nettlp device %s\n", __func__, pci_name(pdev));
+
+	nt = kmalloc(sizeof(*nt), GFP_KERNEL);
+	if (!nt)
+		return -ENOMEM;
+
+	pci_set_drvdata(pdev, nt);
 
 	rc = pci_enable_device(pdev);
 	if (rc)
@@ -79,17 +80,17 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 	pci_set_master(pdev);
 
 	/* BAR0 (pcie pio) */
-	nettlp_store_bar_info(pdev, &nt.dev.bar0, 0);
+	nettlp_store_bar_info(pdev, &nt->dev.bar0, 0);
 
 	/* BAR2 (pcie DMA) */
-	nettlp_store_bar_info(pdev, &nt.dev.bar2, 2);
+	nettlp_store_bar_info(pdev, &nt->dev.bar2, 2);
 
 	/* BAR4 (pseudo memory-dependent) */
-	nettlp_store_bar_info(pdev, &nt.dev.bar4, 4);
+	nettlp_store_bar_info(pdev, &nt->dev.bar4, 4);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 	pr_info("Allocate BAR4 as p2pdma memory\n");
-	rc = pci_p2pdma_add_resource(pdev, 4, nt.dev.bar4.len, 0);
+	rc = pci_p2pdma_add_resource(pdev, 4, nt->dev.bar4.len, 0);
 	if (rc) {
 		pr_err("failed to register BAR4 as p2pdma resource\n");
 		goto error;
@@ -97,11 +98,12 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 	pci_p2pmem_publish(pdev, true);
 #endif
 	
-
 	return 0;
 
 error:
 	pr_info("nettlp_pci_init error\n");
+	pci_set_drvdata(pdev, NULL);
+	kfree(nt);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	return -1;
@@ -109,7 +111,12 @@ error:
 
 static void nettlp_pci_remove(struct pci_dev *pdev)
 {
-	pr_info("%s\n", __func__);
+	struct nettlp_dev *nt = pci_get_drvdata(pdev);
+
+	pr_info("%s: remove nettlp device %s\n", __func__, pci_name(pdev));
+
+	pci_set_drvdata(pdev, NULL);
+	kfree(nt);
 
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
