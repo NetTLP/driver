@@ -161,7 +161,6 @@ error_interrupts:
 error:
 	pr_info("nettlp_pci_init error\n");
 	pci_set_drvdata(pdev, NULL);
-	kfree(nt);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	return -1;
