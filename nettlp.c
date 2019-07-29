@@ -36,6 +36,9 @@ struct nettlp {
 
 struct nettlp_dev {
 	struct nettlp dev;
+	int num_vec;
+	int max_num_vec;
+	bool irq_allocated[0x3f];
 };
 
 
@@ -54,15 +57,62 @@ static void nettlp_store_bar_info(struct pci_dev *pdev,
 	pr_info("BAR%d len  : %llu\n", barn, bar->len);
 }
 
+
+static void unregister_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
+{
+	int irq;
+
+	for (irq = 0; irq < nt->max_num_vec; irq++) {
+		if (nt->irq_allocated[irq])
+			free_irq(pci_irq_vector(pdev, irq), nt);
+		nt->irq_allocated[irq] = false;
+	}
+}
+
+static irqreturn_t interrupt_handler(int irq, void *nic_irq)
+{
+	pr_info("Interrupt! irq=%d\n", irq);
+
+	return IRQ_HANDLED;
+}
+
+static int register_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
+{
+	int ret, irq;
+
+	nt->num_vec = pci_msix_vec_count(pdev);
+	pr_info("%s: register nettlp device %s, num_vec=%d\n",
+			__func__, pci_name(pdev), nt->num_vec);
+	nt->max_num_vec = 4;    //FIXME
+
+	// Enable MSI-X
+	ret = pci_alloc_irq_vectors(pdev, nt->max_num_vec, nt->max_num_vec, PCI_IRQ_MSIX);
+	if (ret < 0) {
+		pr_info("Request for #%d msix vectors failed, returned %d\n",
+		nt->num_vec, ret);
+		return 1;
+	}
+
+	// register interrupt handler 
+	for (irq = 0; irq < nt->max_num_vec; irq++) {
+		ret = request_irq(pci_irq_vector(pdev, irq), interrupt_handler, 0, DRV_NAME, nt);
+		if (ret)
+			return 1;
+		nt->irq_allocated[irq] = true;
+	}
+
+	return 0;
+}
+
 static int nettlp_pci_init(struct pci_dev *pdev,
 			   const struct pci_device_id *ent)
 {
-	int rc;
 	struct nettlp_dev *nt;
+	int rc;
 
 	pr_info("%s: register nettlp device %s\n", __func__, pci_name(pdev));
 
-	nt = kmalloc(sizeof(*nt), GFP_KERNEL);
+	nt = devm_kzalloc(&pdev->dev, sizeof(*nt), GFP_KERNEL);
 	if (!nt)
 		return -ENOMEM;
 
@@ -97,9 +147,17 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 	}
 	pci_p2pmem_publish(pdev, true);
 #endif
-	
+
+	rc = register_interrupts(nt, pdev);
+	if (rc)
+		goto error_interrupts;
+
 	return 0;
 
+error_interrupts:
+	unregister_interrupts(nt, pdev);
+	pci_free_irq_vectors(pdev);
+	nt->num_vec = 0;
 error:
 	pr_info("nettlp_pci_init error\n");
 	pci_set_drvdata(pdev, NULL);
@@ -116,7 +174,10 @@ static void nettlp_pci_remove(struct pci_dev *pdev)
 	pr_info("%s: remove nettlp device %s\n", __func__, pci_name(pdev));
 
 	pci_set_drvdata(pdev, NULL);
-	kfree(nt);
+
+	unregister_interrupts(nt, pdev);
+	pci_free_irq_vectors(pdev);
+	nt->num_vec = 0;
 
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
