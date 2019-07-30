@@ -23,13 +23,12 @@
 #define NETTLP_NUM_VEC  4
 
 struct mmio {
-	uint8_t *virt;
+	void *virt;
 	uint64_t start;
 	uint64_t end;
 	uint64_t flags;
 	uint64_t len;
 };
-
 
 struct nettlp {
 	struct mmio bar0;
@@ -37,26 +36,47 @@ struct nettlp {
 	struct mmio bar4;
 };
 
+
+
+/* structure transferring MSIX address and data to the libtlp-side
+ */
+struct nettlp_msix {
+	uint64_t addr;
+	uint32_t data;
+} __attribute__((__packed__));
+
+/* structure describing nettlp device */
 struct nettlp_dev {
 	struct nettlp dev;
 	int num_vec;
 	bool irq_allocated[NETTLP_MAX_VEC];
+
+	struct nettlp_msix msix[NETTLP_MAX_VEC];
 };
 
 
 
 static void nettlp_store_bar_info(struct pci_dev *pdev,
-				  struct mmio *bar, int barn)
+				  struct mmio *bar, int barn, bool do_ioremap)
 {
+	memset(bar, 0, sizeof(*bar));
 	bar->start = pci_resource_start(pdev, barn);
 	bar->end   = pci_resource_end(pdev, barn);
 	bar->flags = pci_resource_flags(pdev, barn);
 	bar->len   = pci_resource_len(pdev, barn);
 
-	pr_info("BAR%d start: %#llx\n", barn, bar->start);
-	pr_info("BAR%d end  : %#llx\n", barn, bar->end);
-	pr_info("BAR%d flags: 0x%llx\n", barn, bar->flags);
-	pr_info("BAR%d len  : %llu\n", barn, bar->len);
+	pr_info("BAR%d start  : %#llx\n", barn, bar->start);
+	pr_info("BAR%d end    : %#llx\n", barn, bar->end);
+	pr_info("BAR%d flags  : 0x%llx\n", barn, bar->flags);
+	pr_info("BAR%d len    : %llu\n", barn, bar->len);
+
+	if (do_ioremap) {
+		bar->virt = ioremap(bar->start, bar->len);
+		if (!bar->virt)
+			pr_err("failed to map BAR%d\n", barn);
+		else
+			pr_info("BAR%d mapped : %p\n", barn, bar->virt);
+	}
 }
 
 
@@ -85,7 +105,8 @@ static int register_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
 	nt->num_vec = NETTLP_NUM_VEC;
 
 	// Enable MSI-X
-	ret = pci_alloc_irq_vectors(pdev, nt->num_vec, nt->num_vec, PCI_IRQ_MSIX);
+	ret = pci_alloc_irq_vectors(pdev, nt->num_vec, nt->num_vec,
+				    PCI_IRQ_MSIX);
 	if (ret < 0) {
 		pr_info("Request for #%d msix vectors failed, returned %d\n",
 		nt->num_vec, ret);
@@ -94,7 +115,8 @@ static int register_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
 
 	// register interrupt handler 
 	for (irq = 0; irq < nt->num_vec; irq++) {
-		ret = request_irq(pci_irq_vector(pdev, irq), interrupt_handler, 0, DRV_NAME, nt);
+		ret = request_irq(pci_irq_vector(pdev, irq),
+				  interrupt_handler, 0, DRV_NAME, nt);
 		if (ret)
 			return 1;
 		nt->irq_allocated[irq] = true;
@@ -103,11 +125,49 @@ static int register_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
 	return 0;
 }
 
+static int nettlp_get_msix_table(struct nettlp_dev *nt)
+{
+	int n;
+	uint64_t upper, lower;
+	uint32_t data;
+
+	/*
+	 * MSIX table address and data are located in BAR2.
+	 * Read the BAR2, and fill the nettlp_dev->msix array with it.
+	 */
+
+	struct msix_table_entry {
+		uint32_t lower_addr;
+		uint32_t upper_addr;
+		uint32_t data;
+		uint32_t rsv;
+	} *e;
+
+	if (!nt->dev.bar2.virt) {
+		pr_err("%s: BAR2 is not ioremapped\n", __func__);
+		return -1;
+	}
+
+	for (n = 0; n < NETTLP_MAX_VEC; n++) {
+		e = nt->dev.bar2.virt + sizeof(struct msix_table_entry) * n;
+
+		upper = readl(&e->upper_addr);
+		lower = readl(&e->lower_addr);
+		data = readl(&e->data);
+
+		nt->msix[n].addr = (upper << 32 | lower);
+		nt->msix[n].data = data;
+	}
+
+	return 0;
+}
+
+
 static int nettlp_pci_init(struct pci_dev *pdev,
 			   const struct pci_device_id *ent)
 {
 	struct nettlp_dev *nt;
-	int rc;
+	int rc, n;
 
 	pr_info("%s: register nettlp device %s\n", __func__, pci_name(pdev));
 
@@ -129,13 +189,13 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 	pci_set_master(pdev);
 
 	/* BAR0 (pcie pio) */
-	nettlp_store_bar_info(pdev, &nt->dev.bar0, 0);
+	nettlp_store_bar_info(pdev, &nt->dev.bar0, 0, false);
 
-	/* BAR2 (pcie DMA) */
-	nettlp_store_bar_info(pdev, &nt->dev.bar2, 2);
+	/* BAR2 (MSIX table) */
+	nettlp_store_bar_info(pdev, &nt->dev.bar2, 2, true);
 
 	/* BAR4 (pseudo memory-dependent) */
-	nettlp_store_bar_info(pdev, &nt->dev.bar4, 4);
+	nettlp_store_bar_info(pdev, &nt->dev.bar4, 4, false);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 	pr_info("Allocate BAR4 as p2pdma memory\n");
@@ -150,6 +210,14 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 	rc = register_interrupts(nt, pdev);
 	if (rc)
 		goto error_interrupts;
+
+	/* gather the MSIX table info and put it into nettlp_dev->msix */
+	nettlp_get_msix_table(nt);
+
+	for (n = 0; n < NETTLP_MAX_VEC; n++) {
+		pr_info("MSIX [%d]: Addr=%#llx, Data=%08x\n",
+			n, nt->msix[n].addr, nt->msix[n].data);
+	}
 
 	return 0;
 
@@ -170,6 +238,10 @@ static void nettlp_pci_remove(struct pci_dev *pdev)
 	struct nettlp_dev *nt = pci_get_drvdata(pdev);
 
 	pr_info("%s: remove nettlp device %s\n", __func__, pci_name(pdev));
+
+	/* iounmap BAR2 where MSIX table is located */
+	if (nt->dev.bar2.virt)
+		iounmap(nt->dev.bar2.virt);
 
 	pci_set_drvdata(pdev, NULL);
 
