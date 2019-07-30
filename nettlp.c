@@ -19,6 +19,9 @@
 #define DRV_NAME          "nettlp"
 #define NETTLP_VERSION  "0.0.2"
 
+#define NETTLP_MAX_VEC  16
+#define NETTLP_NUM_VEC  4
+
 struct mmio {
 	uint8_t *virt;
 	uint64_t start;
@@ -37,8 +40,7 @@ struct nettlp {
 struct nettlp_dev {
 	struct nettlp dev;
 	int num_vec;
-	int max_num_vec;
-	bool irq_allocated[0x3f];
+	bool irq_allocated[NETTLP_MAX_VEC];
 };
 
 
@@ -62,7 +64,7 @@ static void unregister_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
 {
 	int irq;
 
-	for (irq = 0; irq < nt->max_num_vec; irq++) {
+	for (irq = 0; irq < NETTLP_MAX_VEC; irq++) {
 		if (nt->irq_allocated[irq])
 			free_irq(pci_irq_vector(pdev, irq), nt);
 		nt->irq_allocated[irq] = false;
@@ -80,13 +82,10 @@ static int register_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
 {
 	int ret, irq;
 
-	nt->num_vec = pci_msix_vec_count(pdev);
-	pr_info("%s: register nettlp device %s, num_vec=%d\n",
-			__func__, pci_name(pdev), nt->num_vec);
-	nt->max_num_vec = 4;    //FIXME
+	nt->num_vec = NETTLP_NUM_VEC;
 
 	// Enable MSI-X
-	ret = pci_alloc_irq_vectors(pdev, nt->max_num_vec, nt->max_num_vec, PCI_IRQ_MSIX);
+	ret = pci_alloc_irq_vectors(pdev, nt->num_vec, nt->num_vec, PCI_IRQ_MSIX);
 	if (ret < 0) {
 		pr_info("Request for #%d msix vectors failed, returned %d\n",
 		nt->num_vec, ret);
@@ -94,7 +93,7 @@ static int register_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
 	}
 
 	// register interrupt handler 
-	for (irq = 0; irq < nt->max_num_vec; irq++) {
+	for (irq = 0; irq < nt->num_vec; irq++) {
 		ret = request_irq(pci_irq_vector(pdev, irq), interrupt_handler, 0, DRV_NAME, nt);
 		if (ret)
 			return 1;
