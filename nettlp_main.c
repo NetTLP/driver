@@ -12,15 +12,14 @@
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
 
+#include "nettlp_msg.h"
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 #include <linux/pci-p2pdma.h>
 #endif
 
-#define DRV_NAME          "nettlp"
-#define NETTLP_VERSION  "0.0.2"
-
-#define NETTLP_MAX_VEC  16
-#define NETTLP_NUM_VEC  4
+#define DRV_NAME	"nettlp"
+#define NETTLP_VERSION	"0.0.3"
 
 struct mmio {
 	void *virt;
@@ -36,14 +35,6 @@ struct nettlp {
 	struct mmio bar4;
 };
 
-
-
-/* structure transferring MSIX address and data to the libtlp-side
- */
-struct nettlp_msix {
-	uint64_t addr;
-	uint32_t data;
-} __attribute__((__packed__));
 
 /* structure describing nettlp device */
 struct nettlp_dev {
@@ -125,43 +116,6 @@ static int register_interrupts(struct nettlp_dev *nt, struct pci_dev *pdev)
 	return 0;
 }
 
-static int nettlp_get_msix_table(struct nettlp_dev *nt)
-{
-	int n;
-	uint64_t upper, lower;
-	uint32_t data;
-
-	/*
-	 * MSIX table address and data are located in BAR2.
-	 * Read the BAR2, and fill the nettlp_dev->msix array with it.
-	 */
-
-	struct msix_table_entry {
-		uint32_t lower_addr;
-		uint32_t upper_addr;
-		uint32_t data;
-		uint32_t rsv;
-	} *e;
-
-	if (!nt->dev.bar2.virt) {
-		pr_err("%s: BAR2 is not ioremapped\n", __func__);
-		return -1;
-	}
-
-	for (n = 0; n < NETTLP_MAX_VEC; n++) {
-		e = nt->dev.bar2.virt + sizeof(struct msix_table_entry) * n;
-
-		upper = readl(&e->upper_addr);
-		lower = readl(&e->lower_addr);
-		data = readl(&e->data);
-
-		nt->msix[n].addr = (upper << 32 | lower);
-		nt->msix[n].data = data;
-	}
-
-	return 0;
-}
-
 
 static int nettlp_pci_init(struct pci_dev *pdev,
 			   const struct pci_device_id *ent)
@@ -211,8 +165,8 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 	if (rc)
 		goto error_interrupts;
 
-	/* gather the MSIX table info and put it into nettlp_dev->msix */
-	nettlp_get_msix_table(nt);
+	/* initialize nettlp_msg module */
+	nettlp_msg_init(nt->dev.bar4.start, nt->dev.bar2.virt);
 
 	for (n = 0; n < NETTLP_MAX_VEC; n++) {
 		pr_info("MSIX [%d]: Addr=%#llx, Data=%08x\n",
@@ -238,6 +192,8 @@ static void nettlp_pci_remove(struct pci_dev *pdev)
 	struct nettlp_dev *nt = pci_get_drvdata(pdev);
 
 	pr_info("%s: remove nettlp device %s\n", __func__, pci_name(pdev));
+
+	nettlp_msg_fini();
 
 	/* iounmap BAR2 where MSIX table is located */
 	if (nt->dev.bar2.virt)
