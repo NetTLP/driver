@@ -71,8 +71,6 @@ static int nettlp_msg_rcv(struct sock *sk, struct sk_buff *skb)
 
 	req = *((int *)(udp_hdr(skb) + 1));
 
-	pr_info("%s: receive request '%d'\n", __func__, req);
-
 	switch (req) {
 	case NETTLP_MSG_GET_BAR4_ADDR:
 		iov[0].iov_base = &ns->bar4_start;
@@ -89,8 +87,6 @@ static int nettlp_msg_rcv(struct sock *sk, struct sk_buff *skb)
 		pr_err("%s: failed to send reply\n", __func__);
 		return ret;
 	}
-
-	return 0;
 
 drop:
 	kfree_skb(skb);
