@@ -166,7 +166,9 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 		goto error_interrupts;
 
 	/* initialize nettlp_msg module */
-	nettlp_msg_init(nt->dev.bar4.start, nt->dev.bar2.virt);
+	nettlp_msg_init(nt->dev.bar4.start,
+			PCI_DEVID(pdev->bus->number, pdev->devfn),
+			nt->dev.bar2.virt);
 
 	for (n = 0; n < NETTLP_MAX_VEC; n++) {
 		pr_info("MSIX [%d]: Addr=%#llx, Data=%08x\n",

@@ -28,6 +28,7 @@ struct nettlp_sock {
 
 	/* values to be used fro generating messages */
 	uint64_t	bar4_start;	/* physical addr of BAR4 for msg 1 */
+	struct nettlp_msg_id id;	/** device id for msg 2 */
 	struct nettlp_msix msix[NETTLP_MAX_VEC]; /* MSIX table on BAR2 */
 };
 
@@ -75,6 +76,10 @@ static int nettlp_msg_rcv(struct sock *sk, struct sk_buff *skb)
 	case NETTLP_MSG_GET_BAR4_ADDR:
 		iov[0].iov_base = &ns->bar4_start;
 		iov[0].iov_len = sizeof(ns->bar4_start);
+		break;
+	case NETTLP_MSG_GET_DEV_ID:
+		iov[0].iov_base = &ns->id;
+		iov[0].iov_len = sizeof(ns->id);
 		break;
 	case NETTLP_MSG_GET_MSIX_TABLE:
 		iov[0].iov_base = &ns->msix;
@@ -133,7 +138,7 @@ static int nettlp_msg_get_msix_table(void *bar2_virt,
 }
 
 /* initialize the messaging module */
-int nettlp_msg_init(uint64_t bar4_start, void *bar2_virt)
+int nettlp_msg_init(uint64_t bar4_start, uint16_t dev_id, void *bar2_virt)
 {
 	int err;
 	struct nettlp_sock *ns;
@@ -150,6 +155,7 @@ int nettlp_msg_init(uint64_t bar4_start, void *bar2_virt)
 
 	/* gather the information to be sent */
 	ns->bar4_start = bar4_start;
+	ns->id.id = dev_id;
 	nettlp_msg_get_msix_table(bar2_virt, ns->msix);
 
 	/* open UDP socket for receiving requests */
