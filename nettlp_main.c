@@ -21,6 +21,10 @@
 #define DRV_NAME	"nettlp"
 #define NETTLP_VERSION	"0.0.3"
 
+static bool disable_msg_socket = false;
+module_param(disable_msg_socket, bool, 0644);
+MODULE_PARM_DESC(disable_msg_socket, "Disable NetTLP Message Module");
+
 struct mmio {
 	void *virt;
 	uint64_t start;
@@ -166,9 +170,12 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 		goto error_interrupts;
 
 	/* initialize nettlp_msg module */
-	nettlp_msg_init(nt->dev.bar4.start,
-			PCI_DEVID(pdev->bus->number, pdev->devfn),
-			nt->dev.bar2.virt);
+	if (!disable_msg_socket) {
+		nettlp_msg_init(nt->dev.bar4.start,
+				PCI_DEVID(pdev->bus->number, pdev->devfn),
+				nt->dev.bar2.virt);
+	} else
+		pr_warn("nettlp message socket is disabled by option\n");
 
 	for (n = 0; n < NETTLP_MAX_VEC; n++) {
 		pr_info("MSIX [%d]: Addr=%#llx, Data=%08x\n",
@@ -195,7 +202,8 @@ static void nettlp_pci_remove(struct pci_dev *pdev)
 
 	pr_info("%s: remove nettlp device %s\n", __func__, pci_name(pdev));
 
-	nettlp_msg_fini();
+	if (!disable_msg_socket)
+		nettlp_msg_fini();
 
 	/* iounmap BAR2 where MSIX table is located */
 	if (nt->dev.bar2.virt)

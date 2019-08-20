@@ -32,7 +32,7 @@ struct nettlp_sock {
 	struct nettlp_msix msix[NETTLP_MAX_VEC]; /* MSIX table on BAR2 */
 };
 
-struct nettlp_sock *nsock;	/* XXX: terrified */
+struct nettlp_sock *nsock = NULL;	/* XXX: terrified */
 
 
 
@@ -148,6 +148,12 @@ int nettlp_msg_init(uint64_t bar4_start, uint16_t dev_id, void *bar2_virt)
 
 	pr_info("initialize nettlp message socket\n");
 
+	if (nsock) {
+		pr_err("%s: NetTLP message socket is already initialized\n",
+			__func__);
+		return -EEXIST;
+	}
+
 	/* initialize the structure and a socket */
 	ns = kzalloc(sizeof(*ns), GFP_KERNEL);
 	if (!ns)
@@ -186,6 +192,12 @@ int nettlp_msg_init(uint64_t bar4_start, uint16_t dev_id, void *bar2_virt)
 
 void nettlp_msg_fini(void)
 {
+	if (!nsock) {
+		pr_err("%s: NetTLP message socket is already released\n",
+		       __func__);
+		return;
+	}
+
 	udp_tunnel_sock_release(nsock->sock);
 	kfree(nsock);
 	nsock = NULL;
