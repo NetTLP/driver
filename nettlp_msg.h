@@ -35,9 +35,11 @@ struct nettlp_msg_msix_table {
 	struct nettlp_msix msix[NETTLP_MAX_VEC];
 };
 
-
-
 int nettlp_msg_init(uint64_t bar4_start, uint16_t dev_id, void *bar2_virt);
 void nettlp_msg_fini(void);
+
+
+/* Fill the nettlp_msix from BAR2 of NetTLP adapter */
+int nettlp_msg_fill_msix_table(void *bar2_virt, struct nettlp_msix *msix);
 
 #endif 

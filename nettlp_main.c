@@ -165,9 +165,23 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 	pci_p2pmem_publish(pdev, true);
 #endif
 
+	/* XXX: Register MSIX interrupts.
+	 * This basic NetTLP driver does not use MSIX, but we 
+	 * implement it here as an exmaple use.
+	 */
 	rc = register_interrupts(nt, pdev);
 	if (rc)
 		goto error_interrupts;
+
+	rc = nettlp_msg_fill_msix_table(nt->dev.bar2.virt, nt->msix);
+	if (rc)
+		pr_err("failed to get MSIX table from BAR2\n");
+	else {
+		for (n = 0; n < NETTLP_MAX_VEC; n++) {
+			pr_info("MSIX [%d]: Addr=%#llx, Data=%08x\n",
+				n, nt->msix[n].addr, nt->msix[n].data);
+		}
+	}
 
 	/* initialize nettlp_msg module */
 	if (!disable_msg_socket) {
@@ -176,11 +190,6 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 				nt->dev.bar2.virt);
 	} else
 		pr_warn("nettlp message socket is disabled by option\n");
-
-	for (n = 0; n < NETTLP_MAX_VEC; n++) {
-		pr_info("MSIX [%d]: Addr=%#llx, Data=%08x\n",
-			n, nt->msix[n].addr, nt->msix[n].data);
-	}
 
 	return 0;
 

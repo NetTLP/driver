@@ -100,8 +100,7 @@ drop:
 
 
 
-static int nettlp_msg_get_msix_table(void *bar2_virt,
-				     struct nettlp_msix *msix)
+int nettlp_msg_fill_msix_table(void *bar2_virt, struct nettlp_msix *msix)
 {
         int n;
         uint64_t upper, lower;
@@ -162,7 +161,7 @@ int nettlp_msg_init(uint64_t bar4_start, uint16_t dev_id, void *bar2_virt)
 	/* gather the information to be sent */
 	ns->bar4_start = bar4_start;
 	ns->id.id = dev_id;
-	nettlp_msg_get_msix_table(bar2_virt, ns->msix);
+	nettlp_msg_fill_msix_table(bar2_virt, ns->msix);
 
 	/* open UDP socket for receiving requests */
 	memset(&udp_conf, 0, sizeof(udp_conf));
