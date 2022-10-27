@@ -158,11 +158,14 @@ static int nettlp_pci_init(struct pci_dev *pdev,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
 	pr_info("Allocate BAR4 as p2pdma memory\n");
 	rc = pci_p2pdma_add_resource(pdev, 4, nt->dev.bar4.len, 0);
-	if (rc) {
+	if (rc == -EOPNOTSUPP) {
+		pr_warn("p2pdma is not supported. "
+			"BAR4 is not exported as p2pdma resource\n");
+	} else if (rc) {
 		pr_err("failed to register BAR4 as p2pdma resource\n");
 		goto error;
-	}
-	pci_p2pmem_publish(pdev, true);
+	} else
+		pci_p2pmem_publish(pdev, true);
 #endif
 
 	/* XXX: Register MSIX interrupts.
